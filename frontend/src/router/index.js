@@ -13,9 +13,15 @@ const routes = [
 		children: [
 			{
 				path: '',
-				name: 'top',
-				component: () => import('../views/template/Index.vue'),
-				meta: { requiresAuth: true }
+				name: 'punch',
+				component: () => import('../views/attendance/Index.vue'),
+				meta: { requiresAuth: false }
+			},
+			{
+				path: 'list',
+				name: 'list',
+				component: () => import('../views/attendance/List.vue'),
+				meta: { requiresAuth: false }
 			},
 		]
 	},

@@ -4,7 +4,7 @@ import bodyParser from 'body-parser';
 import cors from 'cors';
 import dotenv from 'dotenv';
 
-import templateRoutes from './routes/template.js';
+import attendanceRoutes from './routes/attendance.js';
 
 dotenv.config();
 
@@ -26,8 +26,8 @@ app.use(cors({
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// 在庫管理
-app.use('/template', templateRoutes); 
+// 勤怠管理
+app.use('/attendance', attendanceRoutes);
 
 // ルーター
 // 管理者用

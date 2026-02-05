@@ -1,17 +1,41 @@
-import mysql from 'mysql2/promise';
-import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import Database from 'better-sqlite3';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const pool = mysql.createPool({
-	host: process.env.DB_HOST || '127.0.0.1',
-	port: Number(process.env.DB_PORT) || 3306,
-	user: process.env.DB_USER || '', //DB名
-	password: process.env.DB_PASSWORD || '', //パスワード
-	database: process.env.DB_NAME || '', //ユーザー名
-	waitForConnections: true,
-	connectionLimit: 10,
-	timezone: 'Z'
-});
+const dataDir = path.join(__dirname, '..', 'data');
+fs.mkdirSync(dataDir, { recursive: true });
 
-export default pool;
+const dbPath = path.join(dataDir, 'attendance.sqlite');
+const db = new Database(dbPath);
+
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+db.exec(`
+	CREATE TABLE IF NOT EXISTS work_sessions (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		work_date TEXT NOT NULL UNIQUE,
+		start_at TEXT,
+		end_at TEXT,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS breaks (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id INTEGER NOT NULL,
+		break_start_at TEXT NOT NULL,
+		break_end_at TEXT,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		FOREIGN KEY(session_id) REFERENCES work_sessions(id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_breaks_session ON breaks(session_id);
+`);
+
+export default db;

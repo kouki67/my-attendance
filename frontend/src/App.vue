@@ -8,7 +8,7 @@
 <style lang="scss">
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: "Hiragino Sans", "Yu Gothic", "BIZ UDPGothic", sans-serif;
   color: #333;
 }
 #app {
