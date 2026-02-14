@@ -36,9 +36,9 @@ const diffSeconds = (start, end) => {
 	return Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000));
 };
 
-const sumBreakSeconds = (breakRows) => breakRows.reduce((sum, row) => {
+const sumBreakSeconds = (breakRows, fallbackEnd = null) => breakRows.reduce((sum, row) => {
 	const start = parseLocalDateTime(row.break_start_at);
-	const end = parseLocalDateTime(row.break_end_at);
+	const end = parseLocalDateTime(row.break_end_at) || fallbackEnd;
 	return sum + diffSeconds(start, end);
 }, 0);
 
@@ -50,71 +50,106 @@ const getSessionByDate = (workDate) => {
 	return db.prepare('SELECT * FROM work_sessions WHERE work_date = ?').get(workDate);
 };
 
+const getOpenSession = () => {
+	return db.prepare('SELECT * FROM work_sessions WHERE end_at IS NULL ORDER BY work_date DESC LIMIT 1').get();
+};
+
 const getOpenBreak = (sessionId) => {
 	return db.prepare('SELECT * FROM breaks WHERE session_id = ? AND break_end_at IS NULL').get(sessionId);
 };
 
 router.get('/status', (req, res) => {
 	const today = formatWorkDate();
-	const session = getSessionByDate(today);
+	const session = getSessionByDate(today) || getOpenSession();
 
 	if (!session) {
 		return res.status(200).json({
 			work_date: today,
 			status: 'not_started',
 			session_id: null,
+			elapsed_seconds: 0,
+			break_seconds: 0,
+			net_seconds: 0,
 		});
 	}
 
 	if (session.end_at) {
+		const breaks = db.prepare('SELECT * FROM breaks WHERE session_id = ?').all(session.id);
+		const workSeconds = diffSeconds(parseLocalDateTime(session.start_at), parseLocalDateTime(session.end_at));
+		const breakSeconds = sumBreakSeconds(breaks);
 		return res.status(200).json({
-			work_date: today,
+			work_date: session.work_date,
 			status: 'finished',
 			session_id: session.id,
+			elapsed_seconds: workSeconds,
+			break_seconds: breakSeconds,
+			net_seconds: Math.max(0, workSeconds - breakSeconds),
 		});
 	}
 
+	const now = new Date();
+	const breaks = db.prepare('SELECT * FROM breaks WHERE session_id = ?').all(session.id);
+	const workSeconds = diffSeconds(parseLocalDateTime(session.start_at), now);
+	const breakSeconds = sumBreakSeconds(breaks, now);
+	const netSeconds = Math.max(0, workSeconds - breakSeconds);
 	const openBreak = getOpenBreak(session.id);
 	if (openBreak) {
 		return res.status(200).json({
-			work_date: today,
+			work_date: session.work_date,
 			status: 'on_break',
 			session_id: session.id,
+			elapsed_seconds: workSeconds,
+			break_seconds: breakSeconds,
+			net_seconds: netSeconds,
 		});
 	}
 
 	return res.status(200).json({
-		work_date: today,
+		work_date: session.work_date,
 		status: 'working',
 		session_id: session.id,
+		elapsed_seconds: workSeconds,
+		break_seconds: breakSeconds,
+		net_seconds: netSeconds,
 	});
 });
 
-router.post('/punch', (req, res) => {
-	const { action } = req.body;
+const getOrCreateSession = (workDate, timestamp) => {
+	const existing = getSessionByDate(workDate);
+	if (existing) return existing;
+	const stmt = db.prepare(`
+		INSERT INTO work_sessions (work_date, start_at, end_at, created_at, updated_at)
+		VALUES (?, ?, NULL, ?, ?)
+	`);
+	const result = stmt.run(workDate, timestamp, timestamp, timestamp);
+	return db.prepare('SELECT * FROM work_sessions WHERE id = ?').get(result.lastInsertRowid);
+};
+
+//業務開始
+router.post('/work/start', (req, res) => {
 	const now = new Date();
 	const timestamp = formatLocalDateTime(now);
 	const workDate = formatWorkDate(now);
-
-	if (!['work_start', 'work_end', 'break_start', 'break_end'].includes(action)) {
-		return res.status(400).json({ message: '不正な操作です' });
-	}
-
 	const session = getSessionByDate(workDate);
+	const openSession = getOpenSession();
 
-	if (action === 'work_start') {
-		if (session) {
-			return res.status(400).json({ message: '既に業務開始済みです' });
-		}
-
-		const nowText = timestamp;
-		const stmt = db.prepare(`
-			INSERT INTO work_sessions (work_date, start_at, end_at, created_at, updated_at)
-			VALUES (?, ?, NULL, ?, ?)
-		`);
-		const result = stmt.run(workDate, nowText, nowText, nowText);
-		return res.status(200).json({ message: '業務開始を記録しました', session_id: result.lastInsertRowid });
+	if (openSession) {
+		return res.status(400).json({ message: '未終了の業務があるため開始できません' });
 	}
+
+	if (session) {
+		return res.status(400).json({ message: '既に業務開始済みです' });
+	}
+
+	const created = getOrCreateSession(workDate, timestamp);
+	return res.status(200).json({ message: '業務開始を記録しました', session_id: created.id });
+});
+
+//業務終了
+router.post('/work/end', (req, res) => {
+	const now = new Date();
+	const timestamp = formatLocalDateTime(now);
+	const session = getOpenSession();
 
 	if (!session) {
 		return res.status(400).json({ message: '業務開始が記録されていません' });
@@ -124,43 +159,65 @@ router.post('/punch', (req, res) => {
 		return res.status(400).json({ message: '既に業務終了済みです' });
 	}
 
-	if (action === 'work_end') {
-		const openBreak = getOpenBreak(session.id);
-		if (openBreak) {
-			return res.status(400).json({ message: '休憩終了後に業務終了してください' });
-		}
-
-		const stmt = db.prepare('UPDATE work_sessions SET end_at = ?, updated_at = ? WHERE id = ?');
-		stmt.run(timestamp, timestamp, session.id);
-		return res.status(200).json({ message: '業務終了を記録しました' });
+	const openBreak = getOpenBreak(session.id);
+	if (openBreak) {
+		return res.status(400).json({ message: '休憩終了後に業務終了してください' });
 	}
 
-	if (action === 'break_start') {
-		const openBreak = getOpenBreak(session.id);
-		if (openBreak) {
-			return res.status(400).json({ message: '既に休憩中です' });
-		}
+	db.prepare('UPDATE work_sessions SET end_at = ?, updated_at = ? WHERE id = ?')
+		.run(timestamp, timestamp, session.id);
+	return res.status(200).json({ message: '業務終了を記録しました' });
+});
 
-		const stmt = db.prepare(`
-			INSERT INTO breaks (session_id, break_start_at, break_end_at, created_at, updated_at)
-			VALUES (?, ?, NULL, ?, ?)
-		`);
-		stmt.run(session.id, timestamp, timestamp, timestamp);
-		return res.status(200).json({ message: '休憩開始を記録しました' });
+//休憩開始
+router.post('/break/start', (req, res) => {
+	const now = new Date();
+	const timestamp = formatLocalDateTime(now);
+	const session = getOpenSession();
+
+	if (!session) {
+		return res.status(400).json({ message: '業務開始が記録されていません' });
 	}
 
-	if (action === 'break_end') {
-		const openBreak = getOpenBreak(session.id);
-		if (!openBreak) {
-			return res.status(400).json({ message: '休憩開始が記録されていません' });
-		}
-
-		const stmt = db.prepare('UPDATE breaks SET break_end_at = ?, updated_at = ? WHERE id = ?');
-		stmt.run(timestamp, timestamp, openBreak.id);
-		return res.status(200).json({ message: '休憩終了を記録しました' });
+	if (session.end_at) {
+		return res.status(400).json({ message: '既に業務終了済みです' });
 	}
 
-	return res.status(500).json({ message: '処理に失敗しました' });
+	const openBreak = getOpenBreak(session.id);
+	if (openBreak) {
+		return res.status(400).json({ message: '既に休憩中です' });
+	}
+
+	db.prepare(`
+		INSERT INTO breaks (session_id, break_start_at, break_end_at, created_at, updated_at)
+		VALUES (?, ?, NULL, ?, ?)
+	`).run(session.id, timestamp, timestamp, timestamp);
+
+	return res.status(200).json({ message: '休憩開始を記録しました' });
+});
+
+//休憩終了
+router.post('/break/end', (req, res) => {
+	const now = new Date();
+	const timestamp = formatLocalDateTime(now);
+	const session = getOpenSession();
+
+	if (!session) {
+		return res.status(400).json({ message: '業務開始が記録されていません' });
+	}
+
+	if (session.end_at) {
+		return res.status(400).json({ message: '既に業務終了済みです' });
+	}
+
+	const openBreak = getOpenBreak(session.id);
+	if (!openBreak) {
+		return res.status(400).json({ message: '休憩開始が記録されていません' });
+	}
+
+	db.prepare('UPDATE breaks SET break_end_at = ?, updated_at = ? WHERE id = ?')
+		.run(timestamp, timestamp, openBreak.id);
+	return res.status(200).json({ message: '休憩終了を記録しました' });
 });
 
 router.get('/sessions', (req, res) => {
@@ -240,6 +297,36 @@ router.get('/sessions/:id/breaks', (req, res) => {
 	return res.status(200).json({ breaks: rows });
 });
 
+router.post('/sessions', (req, res) => {
+	const { work_date: workDate, start_at: startAt, end_at: endAt } = req.body;
+
+	if (!workDate || !startAt || !endAt) {
+		return res.status(400).json({ message: '日付・開始・終了を入力してください' });
+	}
+
+	const startDate = parseLocalDateTime(startAt);
+	const endDate = parseLocalDateTime(endAt);
+	if (!startDate || !endDate) {
+		return res.status(400).json({ message: '日時の形式が不正です' });
+	}
+	if (startDate >= endDate) {
+		return res.status(400).json({ message: '開始時刻は終了時刻より前である必要があります' });
+	}
+
+	const existing = getSessionByDate(workDate);
+	if (existing) {
+		return res.status(400).json({ message: '既に同日の業務データがあります' });
+	}
+
+	const timestamp = formatLocalDateTime();
+	const result = db.prepare(`
+		INSERT INTO work_sessions (work_date, start_at, end_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+	`).run(workDate, startAt, endAt, timestamp, timestamp);
+
+	return res.status(200).json({ message: '業務データを追加しました', session_id: result.lastInsertRowid });
+});
+
 router.put('/sessions/:id', (req, res) => {
 	const sessionId = Number(req.params.id);
 	const { start_at: startAt, end_at: endAt } = req.body;
@@ -284,6 +371,21 @@ router.put('/sessions/:id', (req, res) => {
 		.run(startAt, endAt, timestamp, sessionId);
 
 	return res.status(200).json({ message: '業務時間を更新しました' });
+});
+
+router.delete('/sessions/:id', (req, res) => {
+	const sessionId = Number(req.params.id);
+	if (!sessionId) {
+		return res.status(400).json({ message: 'セッションIDが不正です' });
+	}
+
+	const session = db.prepare('SELECT * FROM work_sessions WHERE id = ?').get(sessionId);
+	if (!session) {
+		return res.status(404).json({ message: '対象のデータが見つかりません' });
+	}
+
+	db.prepare('DELETE FROM work_sessions WHERE id = ?').run(sessionId);
+	return res.status(200).json({ message: '業務データを削除しました' });
 });
 
 router.post('/sessions/:id/breaks', (req, res) => {

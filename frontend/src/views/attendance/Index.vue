@@ -4,6 +4,7 @@ import { apiRequest } from '../../lib/api.js';
 
 const now = ref(new Date());
 const status = ref('loading');
+const netSeconds = ref(0);
 const message = ref('');
 const messageType = ref('info');
 
@@ -20,28 +21,37 @@ const formatDate = (date) => {
 };
 
 const formatTime = (date) => `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+const formatDuration = (seconds) => {
+	if (!seconds) return '00:00';
+	const mins = Math.floor(seconds / 60);
+	const hh = pad(Math.floor(mins / 60));
+	const mm = pad(mins % 60);
+	return `${hh}:${mm}`;
+};
 
 const dateText = computed(() => formatDate(now.value));
 const timeText = computed(() => formatTime(now.value));
+const netTimeText = computed(() => formatDuration(netSeconds.value));
 
-let timerId = null;
+let clockTimerId = null;
+let syncTimerId = null;
 
 const refreshStatus = async () => {
 	try {
 		const data = await apiRequest('/attendance/status');
 		status.value = data.status;
+		netSeconds.value = data.net_seconds || 0;
 	} catch (error) {
 		message.value = error.message;
 		messageType.value = 'error';
 	}
 };
 
-const punch = async (action) => {
+const punch = async (path) => {
 	message.value = '';
 	try {
-		const data = await apiRequest('/attendance/punch', {
+		const data = await apiRequest(`/attendance${path}`, {
 			method: 'POST',
-			body: JSON.stringify({ action }),
 		});
 		message.value = data.message;
 		messageType.value = 'success';
@@ -85,15 +95,26 @@ const statusLabel = computed(() => {
 });
 
 onMounted(() => {
-	timerId = window.setInterval(() => {
+	clockTimerId = window.setInterval(() => {
 		now.value = new Date();
+		if (status.value === 'working') {
+			netSeconds.value += 1;
+		}
 	}, 1000);
+
+	syncTimerId = window.setInterval(() => {
+		refreshStatus();
+	}, 30000);
+
 	refreshStatus();
 });
 
 onUnmounted(() => {
-	if (timerId) {
-		clearInterval(timerId);
+	if (clockTimerId) {
+		clearInterval(clockTimerId);
+	}
+	if (syncTimerId) {
+		clearInterval(syncTimerId);
 	}
 });
 </script>
@@ -107,34 +128,37 @@ onUnmounted(() => {
 				現在の状態:
 				<span>{{ statusLabel }}</span>
 			</p>
+			<p class="net">
+				本日の実働: <strong>{{ netTimeText }}</strong>
+			</p>
 		</section>
 
 		<section class="controls">
 			<button
 				class="btn primary"
 				:disabled="!buttonState.workStart"
-				@click="punch('work_start')"
+				@click="punch('/work/start')"
 			>
 				業務開始
 			</button>
 			<button
 				class="btn"
 				:disabled="!buttonState.workEnd"
-				@click="punch('work_end')"
+				@click="punch('/work/end')"
 			>
 				業務終了
 			</button>
 			<button
 				class="btn"
 				:disabled="!buttonState.breakStart"
-				@click="punch('break_start')"
+				@click="punch('/break/start')"
 			>
 				休憩開始
 			</button>
 			<button
 				class="btn"
 				:disabled="!buttonState.breakEnd"
-				@click="punch('break_end')"
+				@click="punch('/break/end')"
 			>
 				休憩終了
 			</button>
@@ -186,6 +210,17 @@ onUnmounted(() => {
 	margin: 0;
 	font-size: 14px;
 	color: #4b5563;
+}
+
+.net {
+	margin: 8px 0 0;
+	font-size: 15px;
+	color: #1f2937;
+}
+
+.net strong {
+	font-size: 20px;
+	letter-spacing: 0.04em;
 }
 
 .controls {

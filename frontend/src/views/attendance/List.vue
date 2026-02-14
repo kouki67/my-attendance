@@ -4,6 +4,7 @@ import { apiRequest } from '../../lib/api.js';
 
 const month = ref('');
 const rows = ref([]);
+const monthlyTotalSeconds = ref(0);
 const message = ref('');
 const messageType = ref('info');
 
@@ -13,6 +14,9 @@ const editEnd = ref('');
 const breaks = ref([]);
 const newBreakStart = ref('');
 const newBreakEnd = ref('');
+const newWorkDate = ref('');
+const newWorkStart = ref('');
+const newWorkEnd = ref('');
 
 const pad = (value) => String(value).padStart(2, '0');
 
@@ -44,6 +48,32 @@ const loadSessions = async () => {
 	try {
 		const data = await apiRequest(`/attendance/sessions?month=${month.value}`);
 		rows.value = data.rows;
+		monthlyTotalSeconds.value = data.rows.reduce((sum, row) => sum + (row.net_seconds || 0), 0);
+	} catch (error) {
+		message.value = error.message;
+		messageType.value = 'error';
+	}
+};
+
+const monthlyTotalText = () => formatDuration(monthlyTotalSeconds.value);
+
+const createSession = async () => {
+	message.value = '';
+	try {
+		await apiRequest('/attendance/sessions', {
+			method: 'POST',
+			body: JSON.stringify({
+				work_date: newWorkDate.value,
+				start_at: fromInputValue(newWorkStart.value),
+				end_at: fromInputValue(newWorkEnd.value),
+			}),
+		});
+		message.value = '業務データを追加しました';
+		messageType.value = 'success';
+		newWorkDate.value = '';
+		newWorkStart.value = '';
+		newWorkEnd.value = '';
+		await loadSessions();
 	} catch (error) {
 		message.value = error.message;
 		messageType.value = 'error';
@@ -156,6 +186,25 @@ const deleteBreak = async (item) => {
 	}
 };
 
+const deleteSession = async (row) => {
+	if (!row.session_id) return;
+	const ok = window.confirm(`${row.work_date} の業務データを削除します。よろしいですか？`);
+	if (!ok) return;
+	message.value = '';
+	try {
+		await apiRequest(`/attendance/sessions/${row.session_id}`, { method: 'DELETE' });
+		message.value = '業務データを削除しました';
+		messageType.value = 'success';
+		if (editingSessionId.value === row.session_id) {
+			closeEdit();
+		}
+		await loadSessions();
+	} catch (error) {
+		message.value = error.message;
+		messageType.value = 'error';
+	}
+};
+
 onMounted(() => {
 	month.value = toMonthValue(new Date());
 	loadSessions();
@@ -169,11 +218,34 @@ onMounted(() => {
 				<label for="month">対象月</label>
 				<input id="month" type="month" v-model="month" @change="loadSessions" />
 			</div>
+			<div class="summary">
+				<p>月の合計実働</p>
+				<strong>{{ monthlyTotalText() }}</strong>
+			</div>
 			<p class="hint">編集は業務データがある日のみ可能です。</p>
 		</div>
 
 		<section v-if="message" class="message" :class="messageType">
 			{{ message }}
+		</section>
+
+		<section class="adder">
+			<h3>過去データの追加</h3>
+			<div class="adder-grid">
+				<label>
+					日付
+					<input type="date" v-model="newWorkDate" />
+				</label>
+				<label>
+					開始
+					<input type="datetime-local" v-model="newWorkStart" />
+				</label>
+				<label>
+					終了
+					<input type="datetime-local" v-model="newWorkEnd" />
+				</label>
+				<button class="btn" @click="createSession">追加</button>
+			</div>
 		</section>
 
 		<div class="table-wrapper">
@@ -202,6 +274,13 @@ onMounted(() => {
 								@click="openEdit(row)"
 							>
 								編集
+							</button>
+							<button
+								class="link danger"
+								:disabled="!row.session_id"
+								@click="deleteSession(row)"
+							>
+								削除
 							</button>
 						</td>
 					</tr>
@@ -283,6 +362,28 @@ onMounted(() => {
 	background: transparent;
 }
 
+.summary {
+	display: flex;
+	align-items: baseline;
+	gap: 12px;
+	background: #111827;
+	color: #f9fafb;
+	padding: 10px 16px;
+	border-radius: 12px;
+	box-shadow: 0 10px 20px rgba(15, 23, 42, 0.12);
+}
+
+.summary p {
+	margin: 0;
+	font-size: 13px;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+.summary strong {
+	font-size: 20px;
+}
+
 .hint {
 	margin: 0;
 	font-size: 13px;
@@ -323,11 +424,16 @@ tbody tr:hover {
 	color: #1d4ed8;
 	cursor: pointer;
 	font-weight: 600;
+	margin-right: 8px;
 }
 
 .link:disabled {
 	color: #9ca3af;
 	cursor: not-allowed;
+}
+
+.link.danger {
+	color: #b91c1c;
 }
 
 .editor {
@@ -339,6 +445,38 @@ tbody tr:hover {
 	display: flex;
 	flex-direction: column;
 	gap: 20px;
+}
+
+.adder {
+	margin-bottom: 20px;
+	background: #fff;
+	padding: 16px;
+	border-radius: 16px;
+	box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.adder-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+	gap: 12px;
+	align-items: end;
+}
+
+.adder-grid label {
+	display: grid;
+	gap: 6px;
+	font-size: 13px;
+	color: #4b5563;
+}
+
+.adder-grid input {
+	border: 1px solid #d1d5db;
+	border-radius: 10px;
+	padding: 10px;
+	font-size: 14px;
 }
 
 .editor-header {
