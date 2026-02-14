@@ -36,6 +36,32 @@ db.exec(`
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_breaks_session ON breaks(session_id);
+
+	CREATE TABLE IF NOT EXISTS credit_cards (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL UNIQUE,
+		payment_day INTEGER NOT NULL CHECK(payment_day BETWEEN 1 AND 31),
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS household_expenses (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		expense_date TEXT NOT NULL,
+		category TEXT NOT NULL,
+		description TEXT,
+		amount INTEGER NOT NULL CHECK(amount > 0),
+		payment_method TEXT NOT NULL CHECK(payment_method IN ('cash', 'credit_card')),
+		credit_card_id INTEGER,
+		scheduled_payment_date TEXT,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		FOREIGN KEY(credit_card_id) REFERENCES credit_cards(id) ON DELETE RESTRICT
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_household_expenses_date ON household_expenses(expense_date);
+	CREATE INDEX IF NOT EXISTS idx_household_expenses_card ON household_expenses(credit_card_id);
+	CREATE INDEX IF NOT EXISTS idx_household_expenses_payment_date ON household_expenses(scheduled_payment_date);
 `);
 
 export default db;

@@ -7,10 +7,11 @@ const route = useRoute();
 <template>
 	<header class="app-header">
 		<div class="header-inner">
-			<h1>勤怠管理</h1>
+			<h1>勤怠・家計管理</h1>
 			<nav class="nav">
 				<RouterLink to="/" :class="{ active: route.name === 'punch' }">打刻</RouterLink>
 				<RouterLink to="/list" :class="{ active: route.name === 'list' }">一覧</RouterLink>
+				<RouterLink to="/household" :class="{ active: route.name === 'household' }">家計簿</RouterLink>
 			</nav>
 		</div>
 	</header>

@@ -5,6 +5,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 
 import attendanceRoutes from './routes/attendance.js';
+import householdRoutes from './routes/household.js';
 
 dotenv.config();
 
@@ -28,6 +29,8 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // 勤怠管理
 app.use('/attendance', attendanceRoutes);
+// 家計簿
+app.use('/household', householdRoutes);
 
 // ルーター
 // 管理者用

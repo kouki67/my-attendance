@@ -23,6 +23,12 @@ const routes = [
 				component: () => import('../views/attendance/List.vue'),
 				meta: { requiresAuth: false }
 			},
+			{
+				path: 'household',
+				name: 'household',
+				component: () => import('../views/household/Index.vue'),
+				meta: { requiresAuth: false }
+			},
 		]
 	},
 	{
